@@ -63,6 +63,24 @@ function AppShell({ children }: { children: ReactNode }) {
 }
 
 function RootDocument({ children }: { children: ReactNode }) {
+  // crypto.randomUUID polyfill: the real method is secure-context only
+  // (https:// or localhost). Lawn runs on http://lawn.ww inside a tailnet
+  // so we need a fallback built on crypto.getRandomValues, which works
+  // on plain http. Must run before any app code reads crypto.randomUUID.
+  const polyfillScript = `
+    (() => {
+      if (typeof window === "undefined" || !window.crypto || window.crypto.randomUUID) return;
+      window.crypto.randomUUID = function() {
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+        return hex.slice(0,8) + "-" + hex.slice(8,12) + "-" + hex.slice(12,16) + "-" + hex.slice(16,20) + "-" + hex.slice(20);
+      };
+    })();
+  `;
+
   const themeInitScript = `
     (() => {
       try {
@@ -85,6 +103,7 @@ function RootDocument({ children }: { children: ReactNode }) {
         <HeadContent />
       </head>
       <body className="h-full antialiased" suppressHydrationWarning>
+        <script dangerouslySetInnerHTML={{ __html: polyfillScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <ConvexClientProvider>
           <ThemeProvider>

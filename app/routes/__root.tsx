@@ -4,7 +4,6 @@ import {
   Scripts,
   createRootRoute,
 } from "@tanstack/react-router";
-import { ClerkProvider } from "@clerk/tanstack-react-start";
 import type { ReactNode } from "react";
 
 import { ConvexClientProvider } from "@/lib/convex";
@@ -64,17 +63,7 @@ function RootComponent() {
 }
 
 function AppShell({ children }: { children: ReactNode }) {
-  const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
-  if (!publishableKey) {
-    throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY");
-  }
-
-  return (
-    <ClerkProvider publishableKey={publishableKey}>
-      <RootDocument>{children}</RootDocument>
-    </ClerkProvider>
-  );
+  return <RootDocument>{children}</RootDocument>;
 }
 
 function RootDocument({ children }: { children: ReactNode }) {

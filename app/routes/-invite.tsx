@@ -3,7 +3,7 @@ import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useState } from "react";
-import { useUser } from "@clerk/tanstack-react-start";
+import { useUser } from "@/lib/auth-shim";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

@@ -1,4 +1,4 @@
-import { SignUp } from "@clerk/tanstack-react-start";
+import { SignUp } from "@/lib/auth-shim";
 import { useRouterState } from "@tanstack/react-router";
 
 export default function SignUpPage() {

@@ -1,68 +1,12 @@
-import { registerRoutes } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import type Stripe from "stripe";
-import { components, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 
 const http = httpRouter();
 
-function getSubscriptionPriceId(subscription: Stripe.Subscription): string | undefined {
-  return subscription.items.data[0]?.price?.id;
-}
-
-function getSubscriptionOrgId(subscription: Stripe.Subscription): string | undefined {
-  const orgId = subscription.metadata.orgId;
-  return typeof orgId === "string" && orgId.length > 0 ? orgId : undefined;
-}
-
-registerRoutes(http, components.stripe, {
-  webhookPath: "/stripe/webhook",
-  events: {
-    "customer.subscription.created": async (
-      ctx,
-      event: Stripe.Event & { type: "customer.subscription.created" },
-    ) => {
-      const subscription = event.data.object as Stripe.Subscription;
-      await ctx.runMutation(internal.billing.syncTeamSubscriptionFromWebhook, {
-        orgId: getSubscriptionOrgId(subscription),
-        stripeCustomerId:
-          typeof subscription.customer === "string" ? subscription.customer : undefined,
-        stripeSubscriptionId: subscription.id,
-        stripePriceId: getSubscriptionPriceId(subscription),
-        status: subscription.status,
-      });
-    },
-    "customer.subscription.updated": async (
-      ctx,
-      event: Stripe.Event & { type: "customer.subscription.updated" },
-    ) => {
-      const subscription = event.data.object as Stripe.Subscription;
-      await ctx.runMutation(internal.billing.syncTeamSubscriptionFromWebhook, {
-        orgId: getSubscriptionOrgId(subscription),
-        stripeCustomerId:
-          typeof subscription.customer === "string" ? subscription.customer : undefined,
-        stripeSubscriptionId: subscription.id,
-        stripePriceId: getSubscriptionPriceId(subscription),
-        status: subscription.status,
-      });
-    },
-    "customer.subscription.deleted": async (
-      ctx,
-      event: Stripe.Event & { type: "customer.subscription.deleted" },
-    ) => {
-      const subscription = event.data.object as Stripe.Subscription;
-      await ctx.runMutation(internal.billing.syncTeamSubscriptionFromWebhook, {
-        orgId: getSubscriptionOrgId(subscription),
-        stripeCustomerId:
-          typeof subscription.customer === "string" ? subscription.customer : undefined,
-        stripeSubscriptionId: subscription.id,
-        stripePriceId: getSubscriptionPriceId(subscription),
-        status: subscription.status,
-      });
-    },
-  },
-});
-
+// Mux webhook is retained only as a back-compat shim until phase 3 rewires
+// ingest to the lawn-media sidecar. It still forwards to muxActions which
+// will be rewritten to accept the sidecar's completion payload instead.
 http.route({
   path: "/webhooks/mux",
   method: "POST",
@@ -84,7 +28,6 @@ http.route({
   }),
 });
 
-// Health check endpoint
 http.route({
   path: "/health",
   method: "GET",

@@ -1,64 +1,59 @@
 import { QueryCtx, MutationCtx, ActionCtx } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 
-type ClerkIdentity = NonNullable<
-  Awaited<ReturnType<QueryCtx["auth"]["getUserIdentity"]>>
->;
+// Local-only auth. Every call resolves to a single fixed identity — the
+// self-hosted deployment runs inside a private tailnet with no sign-in
+// surface. All *ClerkId columns still exist in the schema but always hold
+// LOCAL_USER_ID.
 
-function hasString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
+const LOCAL_USER_ID = "local";
+const LOCAL_USER_EMAIL = "local@lawn.ww";
+const LOCAL_USER_NAME = "Local";
 
-function getOptionalString(identity: ClerkIdentity, key: string): string | undefined {
-  const value = (identity as Record<string, unknown>)[key];
-  return hasString(value) ? value : undefined;
-}
+type ClerkIdentity = {
+  subject: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  pictureUrl?: string;
+};
+
+const LOCAL_IDENTITY: ClerkIdentity = {
+  subject: LOCAL_USER_ID,
+  name: LOCAL_USER_NAME,
+  firstName: LOCAL_USER_NAME,
+  lastName: "",
+  email: LOCAL_USER_EMAIL,
+};
 
 export function identityName(identity: ClerkIdentity): string {
-  const name = getOptionalString(identity, "name");
-  if (name) return name;
-
-  const firstName = getOptionalString(identity, "firstName");
-  const lastName = getOptionalString(identity, "lastName");
-  if (firstName && lastName) return `${firstName} ${lastName}`;
-
-  const email = getOptionalString(identity, "email");
-  if (email) return email;
-
-  return "Unknown";
+  if (identity.name) return identity.name;
+  if (identity.firstName && identity.lastName) {
+    return `${identity.firstName} ${identity.lastName}`;
+  }
+  if (identity.email) return identity.email;
+  return LOCAL_USER_NAME;
 }
 
 export function identityEmail(identity: ClerkIdentity): string {
-  return getOptionalString(identity, "email") ?? "";
+  return identity.email ?? LOCAL_USER_EMAIL;
 }
 
 export function identityAvatarUrl(identity: ClerkIdentity): string | undefined {
-  return getOptionalString(identity, "pictureUrl");
+  return identity.pictureUrl;
 }
 
-export async function getUser(ctx: QueryCtx | MutationCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    return null;
-  }
-
-  return identity;
+export async function getUser(_ctx: QueryCtx | MutationCtx) {
+  return LOCAL_IDENTITY;
 }
 
-export async function requireUser(ctx: QueryCtx | MutationCtx) {
-  const user = await getUser(ctx);
-  if (!user) {
-    throw new Error("Not authenticated");
-  }
-  return user;
+export async function requireUser(_ctx: QueryCtx | MutationCtx) {
+  return LOCAL_IDENTITY;
 }
 
-export async function getIdentity(ctx: ActionCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error("Not authenticated");
-  }
-  return identity;
+export async function getIdentity(_ctx: ActionCtx) {
+  return LOCAL_IDENTITY;
 }
 
 const ROLE_HIERARCHY = {
@@ -73,14 +68,14 @@ type Role = keyof typeof ROLE_HIERARCHY;
 export async function requireTeamAccess(
   ctx: QueryCtx | MutationCtx,
   teamId: Id<"teams">,
-  requiredRole?: Role
+  requiredRole?: Role,
 ) {
   const user = await requireUser(ctx);
 
   const membership = await ctx.db
     .query("teamMembers")
     .withIndex("by_team_and_user", (q) =>
-      q.eq("teamId", teamId).eq("userClerkId", user.subject)
+      q.eq("teamId", teamId).eq("userClerkId", user.subject),
     )
     .unique();
 
@@ -98,7 +93,7 @@ export async function requireTeamAccess(
 export async function requireProjectAccess(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
-  requiredRole?: Role
+  requiredRole?: Role,
 ) {
   const user = await requireUser(ctx);
 
@@ -115,7 +110,7 @@ export async function requireProjectAccess(
 export async function requireVideoAccess(
   ctx: QueryCtx | MutationCtx,
   videoId: Id<"videos">,
-  requiredRole?: Role
+  requiredRole?: Role,
 ) {
   const user = await requireUser(ctx);
 
@@ -124,7 +119,11 @@ export async function requireVideoAccess(
     throw new Error("Video not found");
   }
 
-  const { membership, project } = await requireProjectAccess(ctx, video.projectId, requiredRole);
+  const { membership, project } = await requireProjectAccess(
+    ctx,
+    video.projectId,
+    requiredRole,
+  );
 
   return { user, membership, project, video };
 }

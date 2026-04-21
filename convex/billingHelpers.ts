@@ -1,68 +1,70 @@
-import { components } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { MutationCtx, QueryCtx } from "./_generated/server";
+
+// Local-only stubs. Upstream lawn gates storage + project creation on a
+// Stripe subscription; the self-hosted deployment has no billing surface,
+// so every team resolves to an "unlimited pro" state and every gate is
+// a no-op. Call sites kept their shape to minimise diff.
 
 export type TeamPlan = "basic" | "pro";
 
 const GIBIBYTE = 1024 ** 3;
 
 export const TEAM_PLAN_MONTHLY_PRICE_USD: Record<TeamPlan, number> = {
-  basic: 5,
-  pro: 25,
+  basic: 0,
+  pro: 0,
 };
+
+const UNLIMITED_STORAGE_BYTES = 1024 * 1024 * GIBIBYTE;
 
 export const TEAM_PLAN_STORAGE_LIMIT_BYTES: Record<TeamPlan, number> = {
-  basic: 100 * GIBIBYTE,
-  pro: 1024 * GIBIBYTE,
+  basic: UNLIMITED_STORAGE_BYTES,
+  pro: UNLIMITED_STORAGE_BYTES,
 };
 
-function hasText(value: string | undefined | null): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-export function normalizeStoredTeamPlan(plan: string): TeamPlan {
-  if (plan === "pro" || plan === "team") return "pro";
-  return "basic";
+export function normalizeStoredTeamPlan(_plan: string): TeamPlan {
+  return "pro";
 }
 
 export function resolvePlanFromStripePriceId(
-  stripePriceId: string | undefined | null,
+  _stripePriceId: string | undefined | null,
 ): TeamPlan | null {
-  if (!hasText(stripePriceId)) return null;
-
-  const basicPriceId = process.env.STRIPE_PRICE_BASIC_MONTHLY;
-  const proPriceId = process.env.STRIPE_PRICE_PRO_MONTHLY;
-
-  if (hasText(basicPriceId) && stripePriceId === basicPriceId) return "basic";
-  if (hasText(proPriceId) && stripePriceId === proPriceId) return "pro";
   return null;
 }
 
-export function getStripePriceIdForPlan(plan: TeamPlan): string {
-  const variableName =
-    plan === "basic" ? "STRIPE_PRICE_BASIC_MONTHLY" : "STRIPE_PRICE_PRO_MONTHLY";
-  const value = process.env[variableName];
-  if (!hasText(value)) {
-    throw new Error(`${variableName} is not configured`);
-  }
-  return value;
+export function getStripePriceIdForPlan(_plan: TeamPlan): string {
+  throw new Error("Billing is disabled in local mode.");
 }
 
 export function hasActiveTeamSubscriptionStatus(
-  status: string | undefined | null,
+  _status: string | undefined | null,
 ): boolean {
-  return status === "active" || status === "trialing" || status === "past_due";
+  return true;
 }
 
 type BillingCtx = QueryCtx | MutationCtx;
 
+type FakeSubscription = {
+  status: "active";
+  priceId: null;
+  stripeCustomerId: null;
+  stripeSubscriptionId: null;
+  currentPeriodEnd: null;
+};
+
+const FAKE_SUBSCRIPTION: FakeSubscription = {
+  status: "active",
+  priceId: null,
+  stripeCustomerId: null,
+  stripeSubscriptionId: null,
+  currentPeriodEnd: null,
+};
+
 export async function getTeamSubscriptionByOrgId(
-  ctx: BillingCtx,
-  teamId: Id<"teams">,
+  _ctx: BillingCtx,
+  _teamId: Id<"teams">,
 ) {
-  return await ctx.runQuery(components.stripe.public.getSubscriptionByOrgId, {
-    orgId: teamId,
-  });
+  return FAKE_SUBSCRIPTION;
 }
 
 export async function getTeamSubscriptionState(
@@ -74,14 +76,12 @@ export async function getTeamSubscriptionState(
     throw new Error("Team not found");
   }
 
-  const subscription = await getTeamSubscriptionByOrgId(ctx, teamId);
-  const subscriptionPlan = resolvePlanFromStripePriceId(subscription?.priceId);
-  const plan = subscriptionPlan ?? normalizeStoredTeamPlan(team.plan);
-  const hasActiveSubscription = hasActiveTeamSubscriptionStatus(
-    subscription?.status,
-  );
-
-  return { team, subscription, plan, hasActiveSubscription };
+  return {
+    team,
+    subscription: FAKE_SUBSCRIPTION,
+    plan: "pro" as TeamPlan,
+    hasActiveSubscription: true,
+  };
 }
 
 export async function getTeamStorageUsedBytes(
@@ -119,32 +119,19 @@ export async function assertTeamHasActiveSubscription(
   ctx: BillingCtx,
   teamId: Id<"teams">,
 ) {
-  const state = await getTeamSubscriptionState(ctx, teamId);
-  if (!state.hasActiveSubscription) {
-    throw new Error("An active Basic or Pro subscription is required.");
-  }
-  return state;
+  return await getTeamSubscriptionState(ctx, teamId);
 }
 
 export async function assertTeamCanStoreBytes(
   ctx: BillingCtx,
   teamId: Id<"teams">,
-  incomingBytes: number,
+  _incomingBytes: number,
 ) {
-  const state = await assertTeamHasActiveSubscription(ctx, teamId);
+  const state = await getTeamSubscriptionState(ctx, teamId);
   const storageUsedBytes = await getTeamStorageUsedBytes(ctx, teamId);
-  const storageLimitBytes = TEAM_PLAN_STORAGE_LIMIT_BYTES[state.plan];
-  const requestedBytes = Number.isFinite(incomingBytes) ? Math.max(0, incomingBytes) : 0;
-
-  if (storageUsedBytes + requestedBytes > storageLimitBytes) {
-    throw new Error(
-      `Storage limit reached for the ${state.plan} plan. Upgrade to continue uploading.`,
-    );
-  }
-
   return {
     ...state,
     storageUsedBytes,
-    storageLimitBytes,
+    storageLimitBytes: UNLIMITED_STORAGE_BYTES,
   };
 }

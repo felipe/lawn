@@ -7,6 +7,7 @@
 // optional source download.
 
 import Fastify, { type FastifyRequest } from "fastify";
+import fastifyStatic from "@fastify/static";
 import { spawn } from "node:child_process";
 import {
   createReadStream,
@@ -40,6 +41,26 @@ const app = Fastify({
 // Disable body parsing for the upload route so the raw stream reaches the
 // handler untouched.
 app.addContentTypeParser("*", (_req, _payload, done) => done(null));
+
+// Serve HLS playlists/segments and thumbnails straight off the data disk.
+// Caddy fronts these paths but can't read /Volumes/... itself under the
+// macOS system LaunchDaemon, so lawn-media doubles as the static server
+// for the data volume. Auth is intentionally skipped — tailnet-only.
+await app.register(fastifyStatic, {
+  root: HLS_DIR,
+  prefix: "/hls/",
+  decorateReply: false,
+  cacheControl: true,
+  maxAge: 60 * 60 * 24,
+});
+
+await app.register(fastifyStatic, {
+  root: THUMBS_DIR,
+  prefix: "/thumbnails/",
+  decorateReply: false,
+  cacheControl: true,
+  maxAge: 60 * 60 * 24,
+});
 
 function requireEnv(name: string): string {
   const value = process.env[name];

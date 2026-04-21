@@ -1,41 +1,18 @@
-import { S3Client } from "@aws-sdk/client-s3";
+// Legacy name kept so upstream imports still resolve. In local mode there
+// is no S3 — lawn-media holds originals on disk and Caddy serves them via
+// /hls/*, /thumbnails/*, and /media/source/*. The only thing anyone
+// imports from here is BUCKET_NAME, which is now an unused placeholder.
 
-export const BUCKET_NAME = process.env.RAILWAY_BUCKET_NAME || "videos";
+export const BUCKET_NAME = "lawn-local";
 
-function getBasePublicUrl(): string {
-  const baseUrl = process.env.RAILWAY_PUBLIC_URL || process.env.RAILWAY_ENDPOINT;
-  if (!baseUrl) {
-    throw new Error("Missing RAILWAY_PUBLIC_URL or RAILWAY_ENDPOINT for bucket URLs");
-  }
-  return baseUrl;
+export function buildPublicUrl(_key: string): string {
+  throw new Error(
+    "buildPublicUrl is not supported in local mode; use convex/mux buildSourceUrl instead.",
+  );
 }
 
-export function buildPublicUrl(key: string): string {
-  const includeBucket = process.env.RAILWAY_PUBLIC_URL_INCLUDE_BUCKET !== "false";
-  const url = new URL(getBasePublicUrl());
-  const basePath = url.pathname.endsWith("/")
-    ? url.pathname.slice(0, -1)
-    : url.pathname;
-  const objectPath = includeBucket ? `${BUCKET_NAME}/${key}` : key;
-  url.pathname = `${basePath}/${objectPath}`;
-  return url.toString();
-}
-
-export function getS3Client(): S3Client {
-  const accessKeyId = process.env.RAILWAY_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.RAILWAY_SECRET_ACCESS_KEY;
-
-  if (!accessKeyId || !secretAccessKey) {
-    throw new Error("Missing Railway S3 credentials");
-  }
-
-  return new S3Client({
-    region: process.env.RAILWAY_REGION || "us-east-1",
-    endpoint: process.env.RAILWAY_ENDPOINT,
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-    },
-    forcePathStyle: true,
-  });
+export function getS3Client(): never {
+  throw new Error(
+    "S3 client is disabled in local mode; lawn-media holds originals on disk.",
+  );
 }

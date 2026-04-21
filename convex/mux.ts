@@ -1,156 +1,134 @@
 "use node";
 
-import Mux from "@mux/mux-node";
+import { createHmac } from "node:crypto";
+
+// Local replacement for the Mux SDK surface. Naming is preserved so the
+// rest of the Convex codebase compiles unchanged — the "muxPlaybackId"
+// schema column simply holds the lawn videoId in local mode. All URLs
+// resolve to the lawn.ww Caddy instance, which serves HLS/thumbs from
+// the shared volume and proxies uploads/source fetches to lawn-media.
 
 function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing required env var: ${name}`);
+  return v;
 }
 
-function readEnv(...names: string[]): string | null {
-  for (const name of names) {
-    const value = process.env[name];
-    if (value) {
-      return value;
-    }
-  }
-  return null;
+function getBaseUrl(): string {
+  return requireEnv("LAWN_MEDIA_BASE_URL").replace(/\/$/, "");
 }
 
-function normalizePrivateKey(value: string): string {
-  return value.includes("\\n") ? value.replace(/\\n/g, "\n") : value;
+export function getUploadSecret(): string {
+  return requireEnv("LAWN_MEDIA_UPLOAD_SECRET");
 }
 
-function getMuxJwtCredentials(): { keyId: string; keySecret: string } {
-  const keyId = readEnv(
-    "MUX_SIGNING_KEY",
-    "MUX_SIGNING_KEY_ID",
-  );
-  if (!keyId) {
-    throw new Error(
-      "Missing required environment variable: MUX_SIGNING_KEY (or legacy MUX_SIGNING_KEY_ID)",
-    );
-  }
-
-  const keySecret = readEnv(
-    "MUX_PRIVATE_KEY",
-    "MUX_SIGNING_PRIVATE_KEY",
-  );
-  if (!keySecret) {
-    throw new Error(
-      "Missing required environment variable: MUX_PRIVATE_KEY (or legacy MUX_SIGNING_PRIVATE_KEY)",
-    );
-  }
-
-  return { keyId, keySecret: normalizePrivateKey(keySecret) };
+export function signVideoToken(videoId: string): string {
+  return createHmac("sha256", getUploadSecret())
+    .update(videoId)
+    .digest("hex");
 }
 
-let cachedMux: Mux | null = null;
-
-export function getMuxClient(): Mux {
-  if (cachedMux) return cachedMux;
-
-  cachedMux = new Mux({
-    tokenId: requireEnv("MUX_TOKEN_ID"),
-    tokenSecret: requireEnv("MUX_TOKEN_SECRET"),
-  });
-
-  return cachedMux;
-}
-
-export async function createMuxAssetFromInputUrl(videoId: string, inputUrl: string) {
-  const mux = getMuxClient();
-  return await mux.video.assets.create({
-    inputs: [{ url: inputUrl }],
-    playback_policies: ["public"],
-    video_quality: "basic",
-    // Mux currently supports 1080p as the lowest adaptive streaming max tier.
-    max_resolution_tier: "1080p",
-    mp4_support: "none",
-    passthrough: videoId,
-  });
-}
-
-export async function getMuxAsset(assetId: string) {
-  const mux = getMuxClient();
-  return await mux.video.assets.retrieve(assetId);
-}
-
-export async function deleteMuxAsset(assetId: string) {
-  const mux = getMuxClient();
-  await mux.video.assets.delete(assetId);
-}
-
-export async function createSignedPlaybackId(assetId: string) {
-  const mux = getMuxClient();
-  return await mux.video.assets.createPlaybackId(assetId, {
-    policy: "signed",
-  });
-}
-
-export async function createPublicPlaybackId(assetId: string) {
-  const mux = getMuxClient();
-  return await mux.video.assets.createPlaybackId(assetId, {
-    policy: "public",
-  });
-}
-
-export async function deletePlaybackId(assetId: string, playbackId: string) {
-  const mux = getMuxClient();
-  await mux.video.assets.deletePlaybackId(assetId, playbackId);
-}
-
-export function buildMuxPlaybackUrl(playbackId: string, token?: string): string {
-  const url = new URL(`https://stream.mux.com/${playbackId}.m3u8`);
-  // Force a single 720p delivery profile in the playback manifest.
-  url.searchParams.set("min_resolution", "720p");
-  url.searchParams.set("max_resolution", "720p");
-  if (token) {
-    url.searchParams.set("token", token);
-  }
+export function buildUploadUrl(videoId: string, filename: string): string {
+  const url = new URL(`${getBaseUrl()}/media/upload/${videoId}`);
+  url.searchParams.set("token", signVideoToken(videoId));
+  url.searchParams.set("filename", filename);
   return url.toString();
 }
 
-export function buildMuxThumbnailUrl(playbackId: string, token?: string): string {
-  const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?time=0`;
-  if (!token) return base;
-  return `${base}&token=${encodeURIComponent(token)}`;
+export function buildSourceUrl(videoId: string): string {
+  const url = new URL(`${getBaseUrl()}/media/source/${videoId}`);
+  url.searchParams.set("token", signVideoToken(videoId));
+  return url.toString();
 }
 
-export async function signPlaybackToken(playbackId: string, expiration = "1h") {
-  const mux = getMuxClient();
-  const credentials = getMuxJwtCredentials();
-  return await mux.jwt.signPlaybackId(playbackId, {
-    keyId: credentials.keyId,
-    keySecret: credentials.keySecret,
-    type: "video",
-    expiration,
-  });
+export function buildMuxPlaybackUrl(playbackId: string, _token?: string): string {
+  return `${getBaseUrl()}/hls/${playbackId}/master.m3u8`;
 }
 
-export async function signThumbnailToken(playbackId: string, expiration = "1h") {
-  const mux = getMuxClient();
-  const credentials = getMuxJwtCredentials();
-  return await mux.jwt.signPlaybackId(playbackId, {
-    keyId: credentials.keyId,
-    keySecret: credentials.keySecret,
-    type: "thumbnail",
-    expiration,
-  });
+export function buildMuxThumbnailUrl(playbackId: string, _token?: string): string {
+  return `${getBaseUrl()}/thumbnails/${playbackId}.jpg`;
 }
 
-export function verifyMuxWebhookSignature(rawBody: string, signature: string | null) {
-  if (!signature) {
-    throw new Error("Missing mux-signature header");
-  }
+// The following shims preserve the upstream API surface so callers don't
+// need to branch on cloud vs. local. In local mode every "asset" is just
+// the videoId — uploads kick off transcoding via lawn-media as soon as
+// the source bytes land.
 
-  const mux = getMuxClient();
-  const webhookSecret = requireEnv("MUX_WEBHOOK_SECRET");
+type FakePlaybackId = { id: string; policy: string };
 
-  mux.webhooks.verifySignature(rawBody, {
-    "mux-signature": signature,
-  }, webhookSecret);
+type FakeAsset = {
+  id: string;
+  passthrough?: string;
+  duration?: number;
+  playback_ids: FakePlaybackId[];
+};
+
+export async function createMuxAssetFromInputUrl(
+  videoId: string,
+  _inputUrl: string,
+): Promise<FakeAsset> {
+  // lawn-media starts transcoding as soon as /media/upload finishes —
+  // there is nothing to do here. Return a fake "asset" keyed on videoId
+  // so the caller can persist muxAssetId = videoId.
+  return {
+    id: videoId,
+    passthrough: videoId,
+    playback_ids: [{ id: videoId, policy: "public" }],
+  };
+}
+
+export async function getMuxAsset(assetId: string): Promise<FakeAsset> {
+  return {
+    id: assetId,
+    passthrough: assetId,
+    playback_ids: [{ id: assetId, policy: "public" }],
+  };
+}
+
+export async function deleteMuxAsset(_assetId: string): Promise<void> {
+  // No-op in local mode. Cleanup of source/HLS/thumbnails is handled by
+  // the future GC path (not yet wired).
+}
+
+export async function createSignedPlaybackId(
+  assetId: string,
+): Promise<FakePlaybackId> {
+  return { id: assetId, policy: "signed" };
+}
+
+export async function createPublicPlaybackId(
+  assetId: string,
+): Promise<FakePlaybackId> {
+  return { id: assetId, policy: "public" };
+}
+
+export async function deletePlaybackId(
+  _assetId: string,
+  _playbackId: string,
+): Promise<void> {
+  // No-op.
+}
+
+export async function signPlaybackToken(
+  _playbackId: string,
+  _expiration = "1h",
+): Promise<string | null> {
+  // Local mode has no signed playback.
+  return null;
+}
+
+export async function signThumbnailToken(
+  _playbackId: string,
+  _expiration = "1h",
+): Promise<string | null> {
+  return null;
+}
+
+export function verifyMuxWebhookSignature(
+  _rawBody: string,
+  _signature: string | null,
+) {
+  // Only reachable via the back-compat /webhooks/mux shim. In local mode
+  // there is no Mux, so the call is effectively a no-op — signature check
+  // is skipped because there is no secret to check against.
 }
